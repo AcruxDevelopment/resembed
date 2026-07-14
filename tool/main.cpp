@@ -68,7 +68,7 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
         // === UNCOMPRESSED / READ-ONLY DIRECT ACCESS MODE ===
         outputFile
             << "#include <string_view>\n\n"
-            << "namespace Resources::Embeds {\n"
+            << "namespace Resources::Embeds::" << identifier << " {\n"
             << "\tnamespace Internal {\n"
             << "\t\tinline constexpr uint8_t " << identifier << "_DATA[] = {\n";
 
@@ -91,9 +91,9 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
             << (columns != 0 ? "\n" : "")
             << "\t\t};\n"
             << "\t}\n\n"
-            << "\tinline constexpr size_t Get_Size_" << identifier << "() { return sizeof(Internal::" << identifier << "_DATA); }\n"
-            << "\tinline constexpr const uint8_t* Get_Data_" << identifier << "() { return Internal::" << identifier << "_DATA; }\n"
-            << "\tinline constexpr std::string_view Get_StringView_" << identifier << "()\n"
+            << "\tinline constexpr size_t GetSize() { return sizeof(Internal::" << identifier << "_DATA); }\n"
+            << "\tinline constexpr const uint8_t* GetData() { return Internal::" << identifier << "_DATA; }\n"
+            << "\tinline constexpr std::string_view GetStringView()\n"
             << "\t{\n"
             << "\t\treturn { reinterpret_cast<const char*>(Internal::" << identifier << "_DATA), sizeof(Internal::" << identifier << "_DATA) };\n"
             << "\t}\n"
@@ -105,7 +105,6 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
         unsigned long compressedSize = mz_compressBound(static_cast<unsigned long>(fileSize));
         std::vector<uint8_t> compressedData(compressedSize);
         
-        // mz_compress2 allows choosing custom levels (1 = fast, 9 = maximum, -1 = default)
         int status = mz_compress2(
             compressedData.data(), 
             &compressedSize, 
@@ -121,8 +120,10 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
         compressedData.resize(compressedSize);
 
         outputFile
-            << "#include \"miniz.h\" // Required for mz_uncompress at runtime\n\n"
-            << "namespace Resources::Embeds {\n"
+            << "#include \"miniz.h\" // Required for mz_uncompress and mz_stream at runtime\n"
+            << "#include <fstream>\n"
+            << "#include <filesystem>\n\n"
+            << "namespace Resources::Embeds::" << identifier << " {\n"
             << "\tnamespace Internal {\n"
             << "\t\tinline constexpr size_t " << identifier << "_ORIGINAL_SIZE = " << fileSize << ";\n"
             << "\t\tinline constexpr size_t " << identifier << "_COMPRESSED_SIZE = " << compressedSize << ";\n"
@@ -147,10 +148,12 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
             << (columns != 0 ? "\n" : "")
             << "\t\t};\n"
             << "\t}\n\n"
-            << "\tinline constexpr size_t Get_Original_Size_" << identifier << "() { return Internal::" << identifier << "_ORIGINAL_SIZE; }\n"
-            << "\tinline constexpr size_t Get_Compressed_Size_" << identifier << "() { return Internal::" << identifier << "_COMPRESSED_SIZE; }\n"
-            << "\tinline constexpr const uint8_t* Get_Compressed_Data_" << identifier << "() { return Internal::" << identifier << "_DATA; }\n\n"
-            << "\tinline bool Decompress_" << identifier << "(uint8_t* destBuffer, size_t destBufferSize)\n"
+            << "\tinline constexpr size_t UncompressedSize() { return Internal::" << identifier << "_ORIGINAL_SIZE; }\n"
+            << "\tinline constexpr size_t CompressedSize() { return Internal::" << identifier << "_COMPRESSED_SIZE; }\n"
+            << "\tinline constexpr const uint8_t* CompressedData() { return Internal::" << identifier << "_DATA; }\n\n"
+            
+            // METHOD 1: Memory Decompression
+            << "\tinline bool Decompress(uint8_t* destBuffer, size_t destBufferSize)\n"
             << "\t{\n"
             << "\t\tif (destBufferSize < Internal::" << identifier << "_ORIGINAL_SIZE) return false;\n"
             << "\t\tunsigned long destLen = destBufferSize;\n"
@@ -161,6 +164,41 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
             << "\t\t\tInternal::" << identifier << "_COMPRESSED_SIZE\n"
             << "\t\t);\n"
             << "\t\treturn status == MZ_OK;\n"
+            << "\t}\n\n"
+            
+            // METHOD 2: Direct File Stream Decompression (Uses 32KB fixed stack chunk)
+            << "\tinline bool Decompress(std::ofstream& file)\n"
+            << "\t{\n"
+            << "\t\tif (!file.is_open()) return false;\n"
+            << "\t\tmz_stream stream = {0};\n"
+            << "\t\tstream.next_in = Internal::" << identifier << "_DATA;\n"
+            << "\t\tstream.avail_in = Internal::" << identifier << "_COMPRESSED_SIZE;\n"
+            << "\t\tif (mz_inflateInit(&stream) != MZ_OK) return false;\n"
+            << "\n"
+            << "\t\tconstexpr size_t CHUNK_SIZE = 32768; // 32 KB fixed stack buffer\n"
+            << "\t\tuint8_t outBuffer[CHUNK_SIZE];\n"
+            << "\t\tint z_status;\n"
+            << "\n"
+            << "\t\tdo {\n"
+            << "\t\t\tstream.next_out = outBuffer;\n"
+            << "\t\t\tstream.avail_out = CHUNK_SIZE;\n"
+            << "\t\t\tz_status = mz_inflate(&stream, MZ_NO_FLUSH);\n"
+            << "\n"
+            << "\t\t\tsize_t bytesDecompressed = CHUNK_SIZE - stream.avail_out;\n"
+            << "\t\t\tif (bytesDecompressed > 0) {\n"
+            << "\t\t\t\tfile.write(reinterpret_cast<const char*>(outBuffer), bytesDecompressed);\n"
+            << "\t\t\t}\n"
+            << "\t\t} while (z_status == MZ_OK);\n"
+            << "\n"
+            << "\t\tmz_inflateEnd(&stream);\n"
+            << "\t\treturn z_status == MZ_STREAM_END;\n"
+            << "\t}\n\n"
+            
+            // METHOD 3: The "Smart" Decompression (Auto-handles opening/closing the file)
+            << "\tinline bool Decompress(const std::filesystem::path& outputPath)\n"
+            << "\t{\n"
+            << "\t\tstd::ofstream file(outputPath, std::ios::binary);\n"
+            << "\t\treturn Decompress(file);\n"
             << "\t}\n"
             << "}\n";
     }
@@ -196,5 +234,8 @@ int main(int argc, const char** argv)
 	int compressionLevel = 6; 
     
     ProcessFile(absoluteResourcesDir, absoluteResourceFile, outputDirectory, compressionLevel);
-	std::filesystem::copy_file("zip_file.hpp", minizCopyFile);
+	if(!std::filesystem::exists(minizCopyFile))
+	{
+		std::filesystem::copy_file("zip_file.hpp", minizCopyFile);
+	}
 }
