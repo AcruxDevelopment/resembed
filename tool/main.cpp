@@ -91,9 +91,9 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
             << (columns != 0 ? "\n" : "")
             << "\t\t};\n"
             << "\t}\n\n"
-            << "\tinline constexpr size_t GetSize() { return sizeof(Internal::" << identifier << "_DATA); }\n"
-            << "\tinline constexpr const uint8_t* GetData() { return Internal::" << identifier << "_DATA; }\n"
-            << "\tinline constexpr std::string_view GetStringView()\n"
+            << "\tinline constexpr size_t Size() { return sizeof(Internal::" << identifier << "_DATA); }\n"
+            << "\tinline constexpr const uint8_t* Data() { return Internal::" << identifier << "_DATA; }\n"
+            << "\tinline constexpr std::string_view StringView()\n"
             << "\t{\n"
             << "\t\treturn { reinterpret_cast<const char*>(Internal::" << identifier << "_DATA), sizeof(Internal::" << identifier << "_DATA) };\n"
             << "\t}\n"
@@ -200,6 +200,15 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
             << "\t\tstd::ofstream file(outputPath, std::ios::binary);\n"
             << "\t\treturn Decompress(file);\n"
             << "\t}\n"
+
+            // METHOD 4: Heap Decompression.
+            << "\tinline std::unique_ptr<uint8_t[]> Decompress()\n"
+            << "\t{\n"
+            << "\t\tauto buffer = std::make_unique<uint8_t[]>(UncompressedSize());\n"
+			<< "\t\tbool success = Decompress(buffer.get(), UncompressedSize());\n"
+            << "\t\treturn success ? std::move(buffer) : nullptr;\n"
+            << "\t}\n"
+			
             << "}\n";
     }
 

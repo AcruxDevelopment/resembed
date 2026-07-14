@@ -89,6 +89,32 @@ void TestStackExtraction()
 }
 
 // =========================================================================
+// CASE 5: IN MEMORY (HEAP ALLOCATION) AUTOMATED BY API
+// Safe for massive files (500MB+). Now properly dumped to disk!
+// =========================================================================
+void TestAutoHeapExtraction()
+{
+    std::cout << "[5] Testing Auto Heap Allocation Decompression...\n";
+    
+	std::unique_ptr<uint8_t[]> buffer = Resources::Embeds::MAIN_CPP::Decompress();
+    
+    if (buffer)
+    {
+        // Dump the heap allocation out to verify the data integrity
+        std::ofstream heapDumpFile("extracted/output_5_autoheap.cpp", std::ios::binary);
+        if (heapDumpFile)
+        {
+            heapDumpFile.write(reinterpret_cast<const char*>(buffer.get()), Resources::Embeds::MAIN_CPP::UncompressedSize());
+            std::cout << "    -> Result: SUCCESS (Dumped to extracted/output_5_autoheap.cpp)\n\n";
+        }
+    }
+    else
+    {
+        std::cout << "    -> Result: FAILED DECOMPRESSION\n\n";
+    }
+}
+
+// =========================================================================
 // ENTRY POINT
 // =========================================================================
 int main()
@@ -103,6 +129,7 @@ int main()
     TestStreamExtraction();
     TestHeapExtraction();
     TestStackExtraction();
+    TestAutoHeapExtraction();
 
     std::cout << "--- All tests complete! ---\n";
     return 0;
