@@ -22,14 +22,23 @@ enum class GenerateHeaderToFileResult
     CompressionFailed
 };
 
-std::string GenerateIdentifierFromText(std::string_view text)
-{
-    return ConvertToNamingConvention(text, NameCase::ScreamingSnakeCase);
-}
-
 std::string GenerateIdentifierFromPath(PathPass path)
 {
-    return GenerateIdentifierFromText(path.c_str());
+    std::string namespacePath;
+    for (const auto& component : path)
+    {
+        if (!namespacePath.empty()) 
+        {
+            namespacePath += "::";
+        }
+        // Converts "sprites" -> "Sprites", "down.png" -> "DownPng"
+        namespacePath += ConvertToNamingConvention(component.string(), NameCase::PascalCase);
+    }
+    return namespacePath;
+}
+std::string GenerateFilenameFromPath(PathPass path)
+{
+    return ConvertToNamingConvention(path.filename().c_str(), NameCase::PascalCase) + ".h";
 }
 
 GenerateHeaderToFileResult GenerateHeaderToFile(
@@ -61,7 +70,8 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
     outputFile
         << "#pragma once\n"
         << "#include <cstdint>\n"
-        << "#include <cstddef>\n";
+        << "#include <cstddef>\n"
+        << "#include <memory>\n"; // Required for std::unique_ptr in Method 4
 
     if (compressionLevel <= 0)
     {
@@ -70,7 +80,7 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
             << "#include <string_view>\n\n"
             << "namespace Resources::Embeds::" << identifier << " {\n"
             << "\tnamespace Internal {\n"
-            << "\t\tinline constexpr uint8_t " << identifier << "_DATA[] = {\n";
+            << "\t\tinline constexpr uint8_t DATA[] = {\n";
 
         int columns = 0;
         outputFile << std::hex << std::setfill('0');
@@ -91,11 +101,11 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
             << (columns != 0 ? "\n" : "")
             << "\t\t};\n"
             << "\t}\n\n"
-            << "\tinline constexpr size_t Size() { return sizeof(Internal::" << identifier << "_DATA); }\n"
-            << "\tinline constexpr const uint8_t* Data() { return Internal::" << identifier << "_DATA; }\n"
+            << "\tinline constexpr size_t Size() { return sizeof(Internal::DATA); }\n"
+            << "\tinline constexpr const uint8_t* Data() { return Internal::DATA; }\n"
             << "\tinline constexpr std::string_view StringView()\n"
             << "\t{\n"
-            << "\t\treturn { reinterpret_cast<const char*>(Internal::" << identifier << "_DATA), sizeof(Internal::" << identifier << "_DATA) };\n"
+            << "\t\treturn { reinterpret_cast<const char*>(Internal::DATA), sizeof(Internal::DATA) };\n"
             << "\t}\n"
             << "}\n";
     }
@@ -125,9 +135,9 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
             << "#include <filesystem>\n\n"
             << "namespace Resources::Embeds::" << identifier << " {\n"
             << "\tnamespace Internal {\n"
-            << "\t\tinline constexpr size_t " << identifier << "_ORIGINAL_SIZE = " << fileSize << ";\n"
-            << "\t\tinline constexpr size_t " << identifier << "_COMPRESSED_SIZE = " << compressedSize << ";\n"
-            << "\t\tinline constexpr uint8_t " << identifier << "_DATA[] = {\n";
+            << "\t\tinline constexpr size_t ORIGINAL_SIZE = " << fileSize << ";\n"
+            << "\t\tinline constexpr size_t COMPRESSED_SIZE = " << compressedSize << ";\n"
+            << "\t\tinline constexpr uint8_t DATA[] = {\n";
 
         int columns = 0;
         outputFile << std::hex << std::setfill('0');
@@ -148,20 +158,20 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
             << (columns != 0 ? "\n" : "")
             << "\t\t};\n"
             << "\t}\n\n"
-            << "\tinline constexpr size_t UncompressedSize() { return Internal::" << identifier << "_ORIGINAL_SIZE; }\n"
-            << "\tinline constexpr size_t CompressedSize() { return Internal::" << identifier << "_COMPRESSED_SIZE; }\n"
-            << "\tinline constexpr const uint8_t* CompressedData() { return Internal::" << identifier << "_DATA; }\n\n"
+            << "\tinline constexpr size_t UncompressedSize() { return Internal::ORIGINAL_SIZE; }\n"
+            << "\tinline constexpr size_t CompressedSize() { return Internal::COMPRESSED_SIZE; }\n"
+            << "\tinline constexpr const uint8_t* CompressedData() { return Internal::DATA; }\n\n"
             
             // METHOD 1: Memory Decompression
             << "\tinline bool Decompress(uint8_t* destBuffer, size_t destBufferSize)\n"
             << "\t{\n"
-            << "\t\tif (destBufferSize < Internal::" << identifier << "_ORIGINAL_SIZE) return false;\n"
+            << "\t\tif (destBufferSize < Internal::ORIGINAL_SIZE) return false;\n"
             << "\t\tunsigned long destLen = destBufferSize;\n"
             << "\t\tint status = mz_uncompress(\n"
             << "\t\t\tdestBuffer, \n"
             << "\t\t\t&destLen, \n"
-            << "\t\t\tInternal::" << identifier << "_DATA, \n"
-            << "\t\t\tInternal::" << identifier << "_COMPRESSED_SIZE\n"
+            << "\t\t\tInternal::DATA, \n"
+            << "\t\t\tInternal::COMPRESSED_SIZE\n"
             << "\t\t);\n"
             << "\t\treturn status == MZ_OK;\n"
             << "\t}\n\n"
@@ -171,8 +181,8 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
             << "\t{\n"
             << "\t\tif (!file.is_open()) return false;\n"
             << "\t\tmz_stream stream = {0};\n"
-            << "\t\tstream.next_in = Internal::" << identifier << "_DATA;\n"
-            << "\t\tstream.avail_in = Internal::" << identifier << "_COMPRESSED_SIZE;\n"
+            << "\t\tstream.next_in = Internal::DATA;\n"
+            << "\t\tstream.avail_in = Internal::COMPRESSED_SIZE;\n"
             << "\t\tif (mz_inflateInit(&stream) != MZ_OK) return false;\n"
             << "\n"
             << "\t\tconstexpr size_t CHUNK_SIZE = 32768; // 32 KB fixed stack buffer\n"
@@ -199,16 +209,16 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
             << "\t{\n"
             << "\t\tstd::ofstream file(outputPath, std::ios::binary);\n"
             << "\t\treturn Decompress(file);\n"
-            << "\t}\n"
+            << "\t}\n\n"
 
             // METHOD 4: Heap Decompression.
             << "\tinline std::unique_ptr<uint8_t[]> Decompress()\n"
             << "\t{\n"
             << "\t\tauto buffer = std::make_unique<uint8_t[]>(UncompressedSize());\n"
-			<< "\t\tbool success = Decompress(buffer.get(), UncompressedSize());\n"
+            << "\t\tbool success = Decompress(buffer.get(), UncompressedSize());\n"
             << "\t\treturn success ? std::move(buffer) : nullptr;\n"
             << "\t}\n"
-			
+            
             << "}\n";
     }
 
@@ -222,7 +232,8 @@ void ProcessFile(PathPass absoluteResourcesDir, PathPass absoluteResourceFile, P
     auto relativeResourceFile = absoluteResourceFile.lexically_relative(absoluteResourcesDir);
 
     std::string identifier = GenerateIdentifierFromPath(relativeResourceFile);
-    Path outputFilePath = outputDirectory / relativeResourceFile.parent_path() / (identifier+".h");
+    std::string outputFilename = GenerateFilenameFromPath(relativeResourceFile);
+    Path outputFilePath = outputDirectory / relativeResourceFile.parent_path() / outputFilename;
 
     auto result = GenerateHeaderToFile(absoluteResourceFile, outputFilePath, identifier, compressionLevel);
     std::cout << (int)result << '\n';

@@ -1,4 +1,4 @@
-#include "resources/embeds/MAIN_CPP.h"
+#include "resources/embeds/MainCpp.h"
 #include <iostream>
 #include <fstream>
 #include <memory>
@@ -11,7 +11,7 @@
 void TestSmartExtraction()
 {
     std::cout << "[1] Testing Smart Path Decompression...\n";
-    bool success = Resources::Embeds::MAIN_CPP::Decompress("extracted/output_1_smart.cpp");
+    bool success = Resources::Embeds::MainCpp::Decompress("extracted/output_1_smart.cpp");
     std::cout << "    -> Result: " << (success ? "SUCCESS" : "FAILED") << "\n\n";
 }
 
@@ -23,7 +23,7 @@ void TestStreamExtraction()
 {
     std::cout << "[2] Testing File Stream Decompression...\n";
     std::ofstream streamFile("extracted/output_2_stream.cpp", std::ios::binary);
-    bool success = Resources::Embeds::MAIN_CPP::Decompress(streamFile);
+    bool success = Resources::Embeds::MainCpp::Decompress(streamFile);
     
     // std::ofstream auto-closes when it goes out of scope
     std::cout << "    -> Result: " << (success ? "SUCCESS" : "FAILED") << "\n\n";
@@ -36,10 +36,10 @@ void TestStreamExtraction()
 void TestHeapExtraction()
 {
     std::cout << "[3] Testing Heap Allocation Decompression...\n";
-    size_t heapRequiredSize = Resources::Embeds::MAIN_CPP::UncompressedSize();
+    size_t heapRequiredSize = Resources::Embeds::MainCpp::UncompressedSize();
     auto heapBuffer = std::make_unique<uint8_t[]>(heapRequiredSize);
     
-    bool success = Resources::Embeds::MAIN_CPP::Decompress(heapBuffer.get(), heapRequiredSize);
+    bool success = Resources::Embeds::MainCpp::Decompress(heapBuffer.get(), heapRequiredSize);
     
     if (success)
     {
@@ -65,13 +65,13 @@ void TestStackExtraction()
 {
     std::cout << "[4] Testing Stack Allocation Decompression...\n";
     
-    constexpr size_t stackRequiredSize = Resources::Embeds::MAIN_CPP::UncompressedSize();
+    constexpr size_t stackRequiredSize = Resources::Embeds::MainCpp::UncompressedSize();
     
     // SAFETY GUARD: Refuse to compile if the file is larger than 1 MB!
     static_assert(stackRequiredSize <= 1024 * 1024, "Asset is too large for the stack! Use the Heap instead.");
 
     uint8_t stackBuffer[stackRequiredSize];
-    bool success = Resources::Embeds::MAIN_CPP::Decompress(stackBuffer, stackRequiredSize);
+    bool success = Resources::Embeds::MainCpp::Decompress(stackBuffer, stackRequiredSize);
     
     if (success)
     {
@@ -96,7 +96,7 @@ void TestAutoHeapExtraction()
 {
     std::cout << "[5] Testing Auto Heap Allocation Decompression...\n";
     
-	std::unique_ptr<uint8_t[]> buffer = Resources::Embeds::MAIN_CPP::Decompress();
+	std::unique_ptr<uint8_t[]> buffer = Resources::Embeds::MainCpp::Decompress();
     
     if (buffer)
     {
@@ -104,7 +104,7 @@ void TestAutoHeapExtraction()
         std::ofstream heapDumpFile("extracted/output_5_autoheap.cpp", std::ios::binary);
         if (heapDumpFile)
         {
-            heapDumpFile.write(reinterpret_cast<const char*>(buffer.get()), Resources::Embeds::MAIN_CPP::UncompressedSize());
+            heapDumpFile.write(reinterpret_cast<const char*>(buffer.get()), Resources::Embeds::MainCpp::UncompressedSize());
             std::cout << "    -> Result: SUCCESS (Dumped to extracted/output_5_autoheap.cpp)\n\n";
         }
     }
