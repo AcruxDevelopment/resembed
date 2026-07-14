@@ -96,6 +96,7 @@ int main()
     std::cout << "--- Testing Asset Decompression API ---\n\n";
 
     // Ensure the output folder exists before running any tests
+	std::filesystem::remove_all("extracted");
     std::filesystem::create_directories("extracted");
 
     TestSmartExtraction();
