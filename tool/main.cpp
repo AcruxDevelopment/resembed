@@ -219,23 +219,64 @@ void ProcessFile(PathPass absoluteResourcesDir, PathPass absoluteResourceFile, P
     std::cout << (int)result << '\n';
 }
 
-int main(int argc, const char** argv)
+// We use a template for the Callback so it accepts lambdas, std::function, 
+// or traditional function pointers with maximum performance.
+namespace fs = std::filesystem;
+template <typename CallbackFunc>
+void ExploreTreeFiles(PathPass targetDir, CallbackFunc callback)
 {
-    auto absoluteResourcesDir = std::filesystem::current_path();
-    auto absoluteResourceFile = absoluteResourcesDir / "main.cpp";
-	Path outputDirectory = "../test/resources/embeds/";
+    if (!fs::exists(targetDir) || !fs::is_directory(targetDir))
+	{
+        std::cerr << "Invalid target path: " << targetDir << "\n";
+        return;
+    }
+
+    auto options = fs::directory_options::skip_permission_denied;
+
+    try
+	{
+        for (const auto& entry : fs::recursive_directory_iterator(targetDir, options))
+		{
+            if (entry.is_regular_file())
+			{
+                // Pass the absolute path to the user's callback
+                callback(fs::absolute(entry.path()));
+            }
+        }
+    }
+	catch (const fs::filesystem_error& e)
+	{
+        std::cerr << "Filesystem exception: " << e.what() << "\n";
+    }
+}
+
+// Pass custom compression levels:
+// 0  -> No Compression (Raw constexpr arrays with direct std::string_view access)
+// 1  -> Fastest Compression
+// 6  -> Default Compression level
+// 9  -> Maximum Compression
+void ProcessDirectory(PathPass absoluteResourcesDir, PathPass outputDirectory, int compressionLevel)
+{
+	ExploreTreeFiles(absoluteResourcesDir, [&](PathPass absoluteResourceFile)
+	{
+		ProcessFile(absoluteResourcesDir, absoluteResourceFile, outputDirectory, compressionLevel);
+	});
+}
+
+void ExportMiniz(PathPass outputDirectory)
+{
 	Path minizCopyFile = outputDirectory / "miniz.h";
-    
-    // Pass custom compression levels:
-    // 0  -> No Compression (Raw constexpr arrays with direct std::string_view access)
-    // 1  -> Fastest Compression
-    // 6  -> Default Compression level
-    // 9  -> Maximum Compression
-	int compressionLevel = 6; 
-    
-    ProcessFile(absoluteResourcesDir, absoluteResourceFile, outputDirectory, compressionLevel);
 	if(!std::filesystem::exists(minizCopyFile))
 	{
 		std::filesystem::copy_file("zip_file.hpp", minizCopyFile);
 	}
+}
+
+int main(int argc, const char** argv)
+{
+    auto absoluteResourcesDir = std::filesystem::current_path();
+	Path outputDirectory = "../test/resources/embeds/";
+
+	ProcessDirectory(absoluteResourcesDir, outputDirectory, 9);
+	ExportMiniz(outputDirectory);
 }
