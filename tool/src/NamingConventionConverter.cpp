@@ -1,4 +1,4 @@
-#include "NamingConventionConverter.h"
+#include "../include/NamingConventionConverter.h"
 #include <vector>
 #include <cctype>
 

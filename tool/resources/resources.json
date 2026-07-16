@@ -1,0 +1,22 @@
+{
+	"@base":
+	{
+		"compression": "maximum",
+		"include_extensions": false,
+		"ignore": ["resources.json"]
+	},
+
+	"images":
+	{
+		"include_extensions": true
+	},
+	"images/cpp/cpp.svg":
+	{
+		"compression": "none"
+	},
+
+	"text":
+	{
+		"compression": "none"
+	}
+}

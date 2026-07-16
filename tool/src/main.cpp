@@ -1,4 +1,5 @@
 #include <cstddef>
+#include <cstdio>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -8,40 +9,13 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#include "Compression.h"
-#include "Configuration.h"
-#include "ConfigurationParser.h"
-#include "NamingConventionConverter.h"
-#include "zip_file.hpp" // Or "miniz.h" directly
+#include "../include/Compression.h"
+#include "../include/Configuration.h"
+#include "../include/ConfigurationParser.h"
+#include "../include/NamingConventionConverter.h"
+#include "../include/zip_file.hpp" // Or "miniz.h" directly
+#include "../include/Util.h"
 
-namespace fs = std::filesystem;
-
-//Create a lightweight proxy wrapper
-struct auto_format {
-    double value;
-};
-
-//Overload the << operator to tell std::cout how to handle the wrapper
-inline std::ostream& operator<<(std::ostream& os, const auto_format& fmt) {
-    if (fmt.value == 0.0 || std::abs(fmt.value) >= 0.01) {
-        os << std::fixed << std::setprecision(2);
-    } else {
-        int precision = std::abs(std::floor(std::log10(std::abs(fmt.value))));
-        os << std::fixed << std::setprecision(precision);
-    }
-    return os << fmt.value;
-}
-
-std::string makeString(const char* string, int repetition)
-{
-	std::string result;
-	result.reserve(strlen(string)*repetition);
-	for(int i = 0; i < repetition; ++i)
-	{
-		result.append(string);
-	}
-	return result;
-}
 
 enum class GenerateHeaderToFileResult
 {
@@ -110,7 +84,9 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
         << "#pragma once\n"
         << "#include <cstdint>\n"
         << "#include <cstddef>\n"
-        << "#include <memory>\n"; // Required for std::unique_ptr in Method 4
+        << "#include <memory>\n" // Required for std::unique_ptr in Method 4
+		<< "#include <fstream>\n"
+		<< "#include <filesystem>\n";
 
     if (config.compressionLevel() == Compression::None)
     {
@@ -144,10 +120,26 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
             << "\t}\n\n"
             << "\tinline constexpr size_t Size() { return sizeof(Internal::DATA); }\n"
             << "\tinline constexpr const uint8_t* Data() { return Internal::DATA; }\n"
+
             << "\tinline std::string_view StringView()\n"
             << "\t{\n"
             << "\t\treturn { reinterpret_cast<const char*>(Internal::DATA), sizeof(Internal::DATA) };\n"
             << "\t}\n"
+
+            << "\tinline bool Extract(std::ofstream& file)\n"
+            << "\t{\n"
+			<< "\t\ttry{\n"
+            << "\t\t\tfile.write(StringView().data(), Size());\n"
+			<< "\t\t} catch (std::exception) { return false; }\n"
+			<< "\t\treturn true;\n"
+            << "\t}\n\n"
+
+            << "\tinline bool Extract(const std::filesystem::path& outputPath)\n"
+            << "\t{\n"
+            << "\t\tstd::ofstream file(outputPath, std::ios::binary);\n"
+			<< "\t\treturn Extract(file);\n"
+            << "\t}\n\n"
+
             << "}\n";
     }
     else
@@ -268,23 +260,6 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
     return GenerateHeaderToFileResult::Ok;
 }
 
-int DirectoryNestingDepth(PathPass gbase, PathPass gtarget, bool isTargetFile)
-{
-    // 1. Normalize paths to resolve symlinks and shortcuts like "." or ".."
-    Path base = fs::weakly_canonical(gbase);
-    Path target = fs::weakly_canonical(gtarget);
-
-    // 2. Find the relative path from base to target
-    fs::path rel = target.lexically_relative(base);
-
-    // 3. If it contains ".." or is empty, it's not nested inside the base
-    if (rel.empty() || rel.string().find("..") != std::string::npos) {
-        return -1; 
-    }
-
-    // 4. Count the path components to determine depth
-    return std::distance(rel.begin(), rel.end()) - (isTargetFile ? 1 : 0);
-}
 
 void ProcessFile(PathPass absoluteResourcesDir, PathPass absoluteResourceFile, PathPass outputDirectory, const Configuration& config, size_t* outEmbedSizeInBinary, bool* outProcessed)
 {
@@ -340,42 +315,6 @@ void ProcessFile(PathPass absoluteResourcesDir, PathPass absoluteResourceFile, P
 	*outEmbedSizeInBinary = embedSizeInBinary;
 }
 
-// We use a template for the Callback so it accepts lambdas, std::function, 
-// or traditional function pointers with maximum performance.
-namespace fs = std::filesystem;
-template <typename CallbackFunc>
-void ExploreTreeFiles(PathPass targetDir, CallbackFunc callback)
-{
-    if (!fs::exists(targetDir) || !fs::is_directory(targetDir))
-	{
-        std::cerr << "Invalid target path: " << targetDir << "\n";
-        return;
-    }
-
-    auto options = fs::directory_options::skip_permission_denied;
-
-    try
-	{
-        for (const auto& entry : fs::recursive_directory_iterator(targetDir, options))
-		{
-            if (entry.is_regular_file())
-			{
-                // Pass the absolute path to the user's callback
-                callback(fs::absolute(entry.path()));
-            }
-        }
-    }
-	catch (const fs::filesystem_error& e)
-	{
-        std::cerr << "Filesystem exception: " << e.what() << "\n";
-    }
-}
-
-// Pass custom compression levels:
-// 0  -> No Compression (Raw constexpr arrays with direct std::string_view access)
-// 1  -> Fastest Compression
-// 6  -> Default Compression level
-// 9  -> Maximum Compression
 void ProcessDirectory(PathPass absoluteResourcesDir, PathPass outputDirectory, const Configuration& config)
 {
 	size_t totalEmbededBytesInBinary = 0;
@@ -405,7 +344,7 @@ bool ExportMiniz(PathPass outputDirectory)
 		Path minizCopyFile = outputDirectory / "miniz.h";
 		if(!std::filesystem::exists(minizCopyFile))
 		{
-			std::filesystem::copy_file("zip_file.hpp", minizCopyFile);
+			std::filesystem::copy_file("export/zip_file.hpp", minizCopyFile);
 		}
 		std::cout << "\n[ExportMiniz] [OK ] Miniz library exported for runtime decompression.\n";
 	}
@@ -429,11 +368,6 @@ int Process(PathPass absoluteResourcesDir, PathPass outputDirectory, Configurati
 	return 0;
 }
 
-fs::path makeAbsoluteWithBase(const fs::path& rel_path, const fs::path& base_dir)
-{
-    fs::path abs_base = fs::absolute(base_dir);
-    return fs::weakly_canonical(abs_base / rel_path);
-}
 
 void printUsage()
 {
@@ -449,8 +383,8 @@ int main(int argc, const char** argv)
 	}
 
     Path resourcesDir = argv[1];
-	Path outputDirectory = argv[2]; //"../test/resources/embeds/";
-									//
+	Path outputDirectory = argv[2];
+
 	Configuration config = (argc > 3) ?
 		ConfigurationParser::ParseFromFile(argv[3]) :
 		Configuration();
@@ -459,6 +393,7 @@ int main(int argc, const char** argv)
 		makeAbsoluteWithBase(fs::current_path(), resourcesDir) :
 		resourcesDir;
 
+	printf("Resources Directory: '%s'\n", absoluteResourcesDir.c_str());
 	return Process(absoluteResourcesDir, outputDirectory, config);
 }
 

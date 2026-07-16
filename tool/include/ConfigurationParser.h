@@ -139,11 +139,15 @@ private:
         {
             return Compression::None;
         }
+        else if (lowerStr == "fastest")
+        {
+            return Compression::Fastest;
+        }
         else if (lowerStr == "balanced")
         {
             return Compression::Balanced; 
         }
-        else if (lowerStr == "maximum" || lowerStr == "max")
+        else if (lowerStr == "maximum")
         {
             return Compression::Maximum;
         }

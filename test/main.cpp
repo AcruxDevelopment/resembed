@@ -1,5 +1,6 @@
-#include "resources/embeds/Main.h"
-#include "resources/embeds/resources/Message.h"
+#include "Resources/Embeds/images/cpp/CppPng.h"
+#include "Resources/Embeds/images/cpp/CppSvg.h"
+#include "Resources/Embeds/text/Message.h"
 #include <iostream>
 #include <fstream>
 #include <memory>
@@ -7,8 +8,7 @@
 
 void TestMessage()
 {
-    constexpr size_t stackRequiredSize = Resources::Embeds::Main::UncompressedSize();
-	std::cout << Resources::Embeds::Resources::Message::StringView() << "\n";
+	std::cout << Resources::Embeds::Text::Message::StringView() << "\n";
 }
 
 // =========================================================================
@@ -17,9 +17,15 @@ void TestMessage()
 // =========================================================================
 void TestSmartExtraction()
 {
-    std::cout << "[1] Testing Smart Path Decompression...\n";
-    bool success = Resources::Embeds::Main::Decompress("extracted/output_1_smart.cpp");
+    std::cout << "[1] Testing Smart Path Extraction...\n";
+
+    std::cout << "Testing Compressed...\n";
+    bool success = Resources::Embeds::Images::Cpp::CppPng::Decompress("extracted/output_1_1_smart.cpp");
     std::cout << "    -> Result: " << (success ? "SUCCESS" : "FAILED") << "\n\n";
+
+    std::cout << "Testing Non-Compressed...\n";
+    bool success2 = Resources::Embeds::Images::Cpp::CppSvg::Extract("extracted/output_1_2_smart.cpp");
+    std::cout << "    -> Result: " << (success2 ? "SUCCESS" : "FAILED") << "\n\n";
 }
 
 // =========================================================================
@@ -29,11 +35,16 @@ void TestSmartExtraction()
 void TestStreamExtraction()
 {
     std::cout << "[2] Testing File Stream Decompression...\n";
-    std::ofstream streamFile("extracted/output_2_stream.cpp", std::ios::binary);
-    bool success = Resources::Embeds::Main::Decompress(streamFile);
-    
-    // std::ofstream auto-closes when it goes out of scope
+
+    std::cout << "Testing Compressed...\n";
+    std::ofstream streamFile("extracted/output_2_1_stream.cpp", std::ios::binary);
+    bool success = Resources::Embeds::Images::Cpp::CppPng::Decompress(streamFile);
     std::cout << "    -> Result: " << (success ? "SUCCESS" : "FAILED") << "\n\n";
+
+    std::cout << "Testing Non-Compressed...\n";
+    std::ofstream streamFile2("extracted/output_2_2_stream.cpp", std::ios::binary);
+    bool success2 = Resources::Embeds::Images::Cpp::CppSvg::Extract(streamFile2);
+    std::cout << "    -> Result: " << (success2 ? "SUCCESS" : "FAILED") << "\n\n";
 }
 
 // =========================================================================
@@ -43,10 +54,10 @@ void TestStreamExtraction()
 void TestHeapExtraction()
 {
     std::cout << "[3] Testing Heap Allocation Decompression...\n";
-    size_t heapRequiredSize = Resources::Embeds::Main::UncompressedSize();
+    size_t heapRequiredSize = Resources::Embeds::Images::Cpp::CppPng::UncompressedSize();
     auto heapBuffer = std::make_unique<uint8_t[]>(heapRequiredSize);
     
-    bool success = Resources::Embeds::Main::Decompress(heapBuffer.get(), heapRequiredSize);
+    bool success = Resources::Embeds::Images::Cpp::CppPng::Decompress(heapBuffer.get(), heapRequiredSize);
     
     if (success)
     {
@@ -72,13 +83,13 @@ void TestStackExtraction()
 {
     std::cout << "[4] Testing Stack Allocation Decompression...\n";
     
-    constexpr size_t stackRequiredSize = Resources::Embeds::Main::UncompressedSize();
+    constexpr size_t stackRequiredSize = Resources::Embeds::Images::Cpp::CppPng::UncompressedSize();
     
     // SAFETY GUARD: Refuse to compile if the file is larger than 1 MB!
     static_assert(stackRequiredSize <= 1024 * 1024, "Asset is too large for the stack! Use the Heap instead.");
 
     uint8_t stackBuffer[stackRequiredSize];
-    bool success = Resources::Embeds::Main::Decompress(stackBuffer, stackRequiredSize);
+    bool success = Resources::Embeds::Images::Cpp::CppPng::Decompress(stackBuffer, stackRequiredSize);
     
     if (success)
     {
@@ -103,7 +114,7 @@ void TestAutoHeapExtraction()
 {
     std::cout << "[5] Testing Auto Heap Allocation Decompression...\n";
     
-	std::unique_ptr<uint8_t[]> buffer = Resources::Embeds::Main::Decompress();
+	std::unique_ptr<uint8_t[]> buffer = Resources::Embeds::Images::Cpp::CppPng::Decompress();
     
     if (buffer)
     {
@@ -111,7 +122,11 @@ void TestAutoHeapExtraction()
         std::ofstream heapDumpFile("extracted/output_5_autoheap.cpp", std::ios::binary);
         if (heapDumpFile)
         {
-            heapDumpFile.write(reinterpret_cast<const char*>(buffer.get()), Resources::Embeds::Main::UncompressedSize());
+            heapDumpFile.write(
+				reinterpret_cast<const char*>(buffer.get()),
+				Resources::Embeds::Images::Cpp::CppPng::UncompressedSize()
+			);
+
             std::cout << "    -> Result: SUCCESS (Dumped to extracted/output_5_autoheap.cpp)\n\n";
         }
     }
