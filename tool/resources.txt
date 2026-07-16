@@ -1,0 +1,11 @@
+[#base]
+compression: 9;
+extension: 1;
+ignore: run.sh, NamingConventionConverter.cpp;
+
+[resources]
+ignore: [empty];
+
+[resources/message.txt]
+compression: 0;
+extension: 0;

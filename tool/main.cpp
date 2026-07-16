@@ -8,11 +8,23 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "Compression.h"
+#include "Configuration.h"
 #include "NamingConventionConverter.h"
 #include "zip_file.hpp" // Or "miniz.h" directly
 
-using PathPass = const std::filesystem::path&;
-using Path = const std::filesystem::path;
+namespace fs = std::filesystem;
+
+std::string makeString(const char* string, int repetition)
+{
+	std::string result;
+	result.reserve(strlen(string)*repetition);
+	for(int i = 0; i < repetition; ++i)
+	{
+		result.append(string);
+	}
+	return result;
+}
 
 enum class GenerateHeaderToFileResult
 {
@@ -22,7 +34,7 @@ enum class GenerateHeaderToFileResult
     CompressionFailed
 };
 
-std::string GenerateIdentifierFromPath(PathPass path)
+std::string GenerateIdentifierFromPath(PathPass path, bool includeExtension)
 {
     std::string namespacePath;
     for (const auto& component : path)
@@ -32,21 +44,31 @@ std::string GenerateIdentifierFromPath(PathPass path)
             namespacePath += "::";
         }
         // Converts "sprites" -> "Sprites", "down.png" -> "DownPng"
-        namespacePath += ConvertToNamingConvention(component.string(), NameCase::PascalCase);
+		std::string name = includeExtension ?
+			component.string() :
+			component.stem().string();
+        namespacePath += ConvertToNamingConvention(name, NameCase::PascalCase);
     }
     return namespacePath;
 }
-std::string GenerateFilenameFromPath(PathPass path)
+std::string GenerateFilenameFromPath(PathPass path, bool includeExtensions)
 {
-    return ConvertToNamingConvention(path.filename().c_str(), NameCase::PascalCase) + ".h";
+	std::string fileName = includeExtensions ?
+		path.filename() :
+		path.stem();
+
+    return ConvertToNamingConvention(fileName.c_str(), NameCase::PascalCase) + ".h";
 }
 
 GenerateHeaderToFileResult GenerateHeaderToFile(
     PathPass inputFilePath, 
     PathPass outputFilePath, 
     std::string_view identifier, 
-    int compressionLevel)
+    TargetConfiguration config,
+	int backtrackDepth,
+	size_t* outEmbedSizeInBinary)
 {
+	*outEmbedSizeInBinary = 0;
     std::filesystem::create_directories(inputFilePath.parent_path());
     std::filesystem::create_directories(outputFilePath.parent_path());
 
@@ -73,7 +95,7 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
         << "#include <cstddef>\n"
         << "#include <memory>\n"; // Required for std::unique_ptr in Method 4
 
-    if (compressionLevel <= 0)
+    if (config.compressionLevel() == Compression::None)
     {
         // === UNCOMPRESSED / READ-ONLY DIRECT ACCESS MODE ===
         outputFile
@@ -96,6 +118,8 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
             }
         }
 
+		*outEmbedSizeInBinary = fileSize;
+
         outputFile
             << std::dec
             << (columns != 0 ? "\n" : "")
@@ -103,7 +127,7 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
             << "\t}\n\n"
             << "\tinline constexpr size_t Size() { return sizeof(Internal::DATA); }\n"
             << "\tinline constexpr const uint8_t* Data() { return Internal::DATA; }\n"
-            << "\tinline constexpr std::string_view StringView()\n"
+            << "\tinline std::string_view StringView()\n"
             << "\t{\n"
             << "\t\treturn { reinterpret_cast<const char*>(Internal::DATA), sizeof(Internal::DATA) };\n"
             << "\t}\n"
@@ -120,7 +144,7 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
             &compressedSize, 
             fileData.data(), 
             static_cast<unsigned long>(fileSize),
-            compressionLevel
+            (int)config.compressionLevel()
         );
 
         if (status != MZ_OK) 
@@ -129,8 +153,9 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
         }
         compressedData.resize(compressedSize);
 
+		std::string minizBacktrackPathPart = makeString("../", backtrackDepth);
         outputFile
-            << "#include \"miniz.h\" // Required for mz_uncompress and mz_stream at runtime\n"
+            << "#include \"" << minizBacktrackPathPart << "miniz.h\" // Required for mz_uncompress and mz_stream at runtime\n"
             << "#include <fstream>\n"
             << "#include <filesystem>\n\n"
             << "namespace Resources::Embeds::" << identifier << " {\n"
@@ -152,6 +177,7 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
                 columns = 0;
             }
         }
+		*outEmbedSizeInBinary = compressedSize;
 
         outputFile
             << std::dec
@@ -225,18 +251,72 @@ GenerateHeaderToFileResult GenerateHeaderToFile(
     return GenerateHeaderToFileResult::Ok;
 }
 
-void ProcessFile(PathPass absoluteResourcesDir, PathPass absoluteResourceFile, PathPass outputDirectory, int compressionLevel)
+int DirectoryNestingDepth(PathPass gbase, PathPass gtarget, bool isTargetFile)
 {
-    if(absoluteResourceFile.is_relative()) std::terminate();
-    if(absoluteResourcesDir.is_relative()) std::terminate();
-    auto relativeResourceFile = absoluteResourceFile.lexically_relative(absoluteResourcesDir);
+    // 1. Normalize paths to resolve symlinks and shortcuts like "." or ".."
+    Path base = fs::weakly_canonical(gbase);
+    Path target = fs::weakly_canonical(gtarget);
 
-    std::string identifier = GenerateIdentifierFromPath(relativeResourceFile);
-    std::string outputFilename = GenerateFilenameFromPath(relativeResourceFile);
+    // 2. Find the relative path from base to target
+    fs::path rel = target.lexically_relative(base);
+
+    // 3. If it contains ".." or is empty, it's not nested inside the base
+    if (rel.empty() || rel.string().find("..") != std::string::npos) {
+        return -1; 
+    }
+
+    // 4. Count the path components to determine depth
+    return std::distance(rel.begin(), rel.end()) - (isTargetFile ? 1 : 0);
+}
+
+void ProcessFile(PathPass absoluteResourcesDir, PathPass absoluteResourceFile, PathPass outputDirectory, const Configuration& config, size_t* outEmbedSizeInBinary, bool* outProcessed)
+{
+	*outProcessed = false;
+	*outEmbedSizeInBinary = 0;
+    if(absoluteResourceFile.is_relative())
+	{
+		std::cout << "[ProcessFile] [ERR] Resource file is not absolute: " << absoluteResourceFile << '\n';
+		std::terminate();
+	}
+    if(absoluteResourcesDir.is_relative())
+	{
+		std::cout << "[ProcessFile] [ERR] Resources directory is not absolute: " << absoluteResourcesDir << '\n';
+		std::terminate();
+	}
+    auto relativeResourceFile = absoluteResourceFile.lexically_relative(absoluteResourcesDir);
+	auto [targetConfig, targetConfigKey] = config.GetConfigurationFor(absoluteResourcesDir, absoluteResourceFile);
+	if(targetConfig.ignores(relativeResourceFile)) return;
+
+	std::cout
+		<< "[ProcessFile] [INF] Processing with config '" << targetConfigKey << "' : " << relativeResourceFile;
+
+    std::string identifier = GenerateIdentifierFromPath(relativeResourceFile, targetConfig.includeExtensions());
+    std::string outputFilename = GenerateFilenameFromPath(relativeResourceFile, targetConfig.includeExtensions());
     Path outputFilePath = outputDirectory / relativeResourceFile.parent_path() / outputFilename;
 
-    auto result = GenerateHeaderToFile(absoluteResourceFile, outputFilePath, identifier, compressionLevel);
-    std::cout << (int)result << '\n';
+	int backtrackDepth = DirectoryNestingDepth(absoluteResourcesDir, absoluteResourceFile, true);
+	size_t embedSizeInBinary;
+    auto result = GenerateHeaderToFile(absoluteResourceFile, outputFilePath, identifier, targetConfig, backtrackDepth, &embedSizeInBinary);
+	switch(result)
+	{
+		case GenerateHeaderToFileResult::CannotOpenInputFile:
+			std::cout << "\n\n[ProcessFile] [ERR] Cannot open input file (" << absoluteResourceFile << ")\n";
+			std::terminate();
+			break;
+		case GenerateHeaderToFileResult::CannotOpenOutputFile:
+			std::cout << "\n\n[ProcessFile] [ERR] Cannot write output file (" << outputFilePath << ")\n";
+			std::terminate();
+			break;
+		case GenerateHeaderToFileResult::CompressionFailed:
+			std::cout << "\n\n[ProcessFile] [ERR] File compression failed for (" << absoluteResourceFile << ")\n";
+			std::terminate();
+			break;
+		case GenerateHeaderToFileResult::Ok:
+			std::cout << " [" << embedSizeInBinary << " bytes embeded to binary]\n";
+			break;
+	}
+	*outProcessed = true;
+	*outEmbedSizeInBinary = embedSizeInBinary;
 }
 
 // We use a template for the Callback so it accepts lambdas, std::function, 
@@ -275,28 +355,57 @@ void ExploreTreeFiles(PathPass targetDir, CallbackFunc callback)
 // 1  -> Fastest Compression
 // 6  -> Default Compression level
 // 9  -> Maximum Compression
-void ProcessDirectory(PathPass absoluteResourcesDir, PathPass outputDirectory, int compressionLevel)
+void ProcessDirectory(PathPass absoluteResourcesDir, PathPass outputDirectory, const Configuration& config)
 {
+	size_t totalEmbededBytesInBinary = 0;
+	size_t embededFileCount = 0;
 	ExploreTreeFiles(absoluteResourcesDir, [&](PathPass absoluteResourceFile)
 	{
-		ProcessFile(absoluteResourcesDir, absoluteResourceFile, outputDirectory, compressionLevel);
+		size_t currentFileEmbededByteCount = 0;
+		bool processed;
+		ProcessFile(absoluteResourcesDir, absoluteResourceFile, outputDirectory, config, &currentFileEmbededByteCount, &processed);
+		totalEmbededBytesInBinary += currentFileEmbededByteCount;
+		embededFileCount += (int)processed;
 	});
+
+	std::cout << "\n[ProcessDirectory] [OK ] Files embeded succesfully.\n";
+	std::cout
+		<< "Files     : " << embededFileCount << "\n"
+		<< "Bytes     : " << totalEmbededBytesInBinary << "\n"
+		<< "KiloBytes : " << (totalEmbededBytesInBinary/1024) << "\n"
+		<< "MegaBytes : " << (totalEmbededBytesInBinary/1024/1024) << "\n"
+		;
 }
 
-void ExportMiniz(PathPass outputDirectory)
+bool ExportMiniz(PathPass outputDirectory)
 {
-	Path minizCopyFile = outputDirectory / "miniz.h";
-	if(!std::filesystem::exists(minizCopyFile))
+	try
 	{
-		std::filesystem::copy_file("zip_file.hpp", minizCopyFile);
+		Path minizCopyFile = outputDirectory / "miniz.h";
+		if(!std::filesystem::exists(minizCopyFile))
+		{
+			std::filesystem::copy_file("zip_file.hpp", minizCopyFile);
+		}
+		std::cout << "\n[ExportMiniz] [OK ] Miniz library exported for runtime decompression.\n";
 	}
+	catch(std::exception e)
+	{
+		std::cout
+			<< "\n[ExportMiniz] [ERR ] Unable to export Miniz library for runtime decompression: '" 
+			<< e.what()
+			<< "'.\n";
+		return false;
+	}
+	return true;
 }
 
 int main(int argc, const char** argv)
 {
     auto absoluteResourcesDir = std::filesystem::current_path();
 	Path outputDirectory = "../test/resources/embeds/";
+	Configuration config;
+	config.TargetConfigs()["resources/message.txt"] = TargetConfiguration(Compression::None, false, {});
 
-	ProcessDirectory(absoluteResourcesDir, outputDirectory, 9);
-	ExportMiniz(outputDirectory);
+	ProcessDirectory(absoluteResourcesDir, outputDirectory, config);
+	if(!ExportMiniz(outputDirectory)) return -1;
 }
