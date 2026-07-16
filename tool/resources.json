@@ -1,0 +1,12 @@
+{
+	"@base":
+	{
+		"compression": "maximum",
+		"include_extensions": false,
+		"ignore": ["run.sh", "resources.json", "NamingConventionConverter.cpp"]
+	},
+	"resources/message.txt":
+	{
+		"compression": "none"
+	}
+}

@@ -1,6 +1,7 @@
 #pragma once
 #include "Compression.h"
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <initializer_list>
 #include <string>
@@ -32,6 +33,22 @@ public:
 		return TargetConfiguration(Compression::Maximum, false, { "resources.txt" });
 	}
 
+	inline void Print(std::string_view name) const
+	{
+		printf("%s\n\tcompression: %s\n\tfile_extensions: %s\n\tignore: ", 
+			name.data(),
+			detail::CompressionNames[(size_t)compressionLevel()],
+			(includeExtensions() ? "on" : "off")
+		);
+
+		if(ignoreEntries().empty()) printf("(empty)");
+		for(const auto& ignore : ignoreEntries())
+		{
+			printf("\n\t\t%s", ignore.c_str());
+		}
+		printf("\n");
+	}
+
 	TargetConfiguration(Compression compression, bool extensions, const std::vector<std::string> ignoreEntries)
 	{
 		m_compression = compression;
@@ -53,6 +70,15 @@ public:
 
 	TargetConfiguration& BaseTargetConfig() { return m_baseTargetConfig; }
 	std::unordered_map<std::string, TargetConfiguration>& TargetConfigs() { return m_targetConfigs; }
+
+	void Print()
+	{
+		m_baseTargetConfig.Print("@base");
+		for(const auto& config : TargetConfigs())
+		{
+			config.second.Print(config.first);
+		}
+	}
 
 	std::pair<const TargetConfiguration&, std::string> GetConfigurationFor(PathPass absoluteResourcesDir, PathPass absoluteResourceFile) const
 	{

@@ -10,10 +10,27 @@
 #include <vector>
 #include "Compression.h"
 #include "Configuration.h"
+#include "ConfigurationParser.h"
 #include "NamingConventionConverter.h"
 #include "zip_file.hpp" // Or "miniz.h" directly
 
 namespace fs = std::filesystem;
+
+//Create a lightweight proxy wrapper
+struct auto_format {
+    double value;
+};
+
+//Overload the << operator to tell std::cout how to handle the wrapper
+inline std::ostream& operator<<(std::ostream& os, const auto_format& fmt) {
+    if (fmt.value == 0.0 || std::abs(fmt.value) >= 0.01) {
+        os << std::fixed << std::setprecision(2);
+    } else {
+        int precision = std::abs(std::floor(std::log10(std::abs(fmt.value))));
+        os << std::fixed << std::setprecision(precision);
+    }
+    return os << fmt.value;
+}
 
 std::string makeString(const char* string, int repetition)
 {
@@ -312,7 +329,11 @@ void ProcessFile(PathPass absoluteResourcesDir, PathPass absoluteResourceFile, P
 			std::terminate();
 			break;
 		case GenerateHeaderToFileResult::Ok:
-			std::cout << " [" << embedSizeInBinary << " bytes embeded to binary]\n";
+			std::cout << " [" 
+				<< embedSizeInBinary << " B / "
+				<< auto_format{((double)embedSizeInBinary/1024)} << " KB / "
+				<< auto_format{((double)embedSizeInBinary/1024/1024)} << " MB "
+				<< " embeded]\n";
 			break;
 	}
 	*outProcessed = true;
@@ -372,8 +393,8 @@ void ProcessDirectory(PathPass absoluteResourcesDir, PathPass outputDirectory, c
 	std::cout
 		<< "Files     : " << embededFileCount << "\n"
 		<< "Bytes     : " << totalEmbededBytesInBinary << "\n"
-		<< "KiloBytes : " << (totalEmbededBytesInBinary/1024) << "\n"
-		<< "MegaBytes : " << (totalEmbededBytesInBinary/1024/1024) << "\n"
+		<< "KiloBytes : " << auto_format{(totalEmbededBytesInBinary/1024.0)} << "\n"
+		<< "MegaBytes : " << auto_format{(totalEmbededBytesInBinary/1024.0/1024.0)} << "\n"
 		;
 }
 
@@ -399,13 +420,16 @@ bool ExportMiniz(PathPass outputDirectory)
 	return true;
 }
 
+
 int main(int argc, const char** argv)
 {
     auto absoluteResourcesDir = std::filesystem::current_path();
 	Path outputDirectory = "../test/resources/embeds/";
-	Configuration config;
-	config.TargetConfigs()["resources/message.txt"] = TargetConfiguration(Compression::None, false, {});
+	Configuration config = ConfigurationParser::ParseFromFile("resources.json");
 
 	ProcessDirectory(absoluteResourcesDir, outputDirectory, config);
+	printf("\n"); config.Print();
 	if(!ExportMiniz(outputDirectory)) return -1;
+
 }
+
