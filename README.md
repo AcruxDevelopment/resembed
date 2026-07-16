@@ -18,7 +18,7 @@ Resembed has two parts:
 Run the generator against your resource directory. It:
 
 1. Recursively scans all files in the source directory
-2. Converts each file path to a PascalCase C++ namespace hierarchy
+2. Converts each file path to a C++ namespace hierarchy
 3. Compresses the file data using `miniz` (`mz_compress2`)
 4. Emits a standalone `.h` file per asset into the output directory
 5. Copies `miniz.h` into the output directory (required at runtime for decompression)
@@ -53,7 +53,7 @@ This compiles `src/main.cpp` and `src/NamingConventionConverter.cpp` into a `res
 ./resembed resources ../test/Resources/Embeds resources/resources.json
 ```
 
-The generated headers land in `../test/Resources/Embeds/` and are gitignored — treat generation as a standard build step.
+The generated headers land in `../test/Resources/Embeds/` — treat generation as a standard build step.
 
 ### Step 2: Build and run your consumer
 
@@ -97,6 +97,7 @@ You control compression and other settings via a JSON config file passed as the 
 - `@base` is the global default for all files
 - Directory keys (e.g., `"images"`) override `@base` for everything inside that directory
 - File-specific keys (e.g., `"images/cpp/cpp.svg"`) override their parent directory
+- Explicit inheritance: add an `"extends"` attribute to exlicitly inherit from another target configuration. (e.g, `"extends": "documents"`)
 - The `ignore` list is **never inherited** — each level must declare its own ignores explicitly
 
 ---
@@ -238,130 +239,4 @@ Resources::Embeds::Text::Message::Extract("output/message.txt");
 └── test/                          # Consumer / test environment
     ├── main.cpp                   # Exercises all decompression strategies
     └── run.sh                     # Build + run the tests
-``` [1](#0-0) [2](#0-1) [3](#0-2) [4](#0-3) [5](#0-4) [6](#0-5) [7](#0-6)
-
-### Citations
-
-**File:** tool/run.sh (L1-8)
-```shellscript
-g++ \
-	src/main.cpp \
-	src/NamingConventionConverter.cpp \
-	-o resembed
-
-rm -fr ../test/Resources/Embeds
-
-./resembed resources ../test/Resources/Embeds resources/resources.json
-```
-
-**File:** tool/resources/resources.json (L1-22)
-```json
-{
-	"@base":
-	{
-		"compression": "maximum",
-		"include_extensions": false,
-		"ignore": ["resources.json"]
-	},
-
-	"images":
-	{
-		"include_extensions": true
-	},
-	"images/cpp/cpp.svg":
-	{
-		"compression": "none"
-	},
-
-	"text":
-	{
-		"compression": "none"
-	}
-}
-```
-
-**File:** test/main.cpp (L1-12)
-```cpp
-#include "Resources/Embeds/images/cpp/CppPng.h"
-#include "Resources/Embeds/images/cpp/CppSvg.h"
-#include "Resources/Embeds/text/Message.h"
-#include <iostream>
-#include <fstream>
-#include <memory>
-#include <filesystem>
-
-void TestMessage()
-{
-	std::cout << Resources::Embeds::Text::Message::StringView() << "\n";
-}
-```
-
-**File:** test/main.cpp (L82-92)
-```cpp
-void TestStackExtraction()
-{
-    std::cout << "[4] Testing Stack Allocation Decompression...\n";
-    
-    constexpr size_t stackRequiredSize = Resources::Embeds::Images::Cpp::CppPng::UncompressedSize();
-    
-    // SAFETY GUARD: Refuse to compile if the file is larger than 1 MB!
-    static_assert(stackRequiredSize <= 1024 * 1024, "Asset is too large for the stack! Use the Heap instead.");
-
-    uint8_t stackBuffer[stackRequiredSize];
-    bool success = Resources::Embeds::Images::Cpp::CppPng::Decompress(stackBuffer, stackRequiredSize);
-```
-
-**File:** test/main.cpp (L113-137)
-```cpp
-void TestAutoHeapExtraction()
-{
-    std::cout << "[5] Testing Auto Heap Allocation Decompression...\n";
-    
-	std::unique_ptr<uint8_t[]> buffer = Resources::Embeds::Images::Cpp::CppPng::Decompress();
-    
-    if (buffer)
-    {
-        // Dump the heap allocation out to verify the data integrity
-        std::ofstream heapDumpFile("extracted/output_5_autoheap.cpp", std::ios::binary);
-        if (heapDumpFile)
-        {
-            heapDumpFile.write(
-				reinterpret_cast<const char*>(buffer.get()),
-				Resources::Embeds::Images::Cpp::CppPng::UncompressedSize()
-			);
-
-            std::cout << "    -> Result: SUCCESS (Dumped to extracted/output_5_autoheap.cpp)\n\n";
-        }
-    }
-    else
-    {
-        std::cout << "    -> Result: FAILED DECOMPRESSION\n\n";
-    }
-}
-```
-
-**File:** test/run.sh (L1-4)
-```shellscript
-rm -fr extracted
-g++ main.cpp -o test
-./test
-ls extracted
-```
-
-**File:** README.md (L47-60)
-```markdown
-**Example File:** `sprites/player/down.png`
-**Generated Header:** `resources/embeds/sprites/player/DownPng.h`
-**Generated Namespace:** `Resources::Embeds::Sprites::Player::DownPng`
-
-```cpp
-// Inside DownPng.h
-namespace Resources::Embeds::Sprites::Player::DownPng {
-    inline constexpr size_t ORIGINAL_SIZE = 4096;
-    inline constexpr uint8_t DATA[] = { 0x42, 0x4D, ... };
-    
-    // Decompression API...
-}
-
-```
 ```
