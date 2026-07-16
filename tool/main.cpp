@@ -420,16 +420,45 @@ bool ExportMiniz(PathPass outputDirectory)
 	return true;
 }
 
-
-int main(int argc, const char** argv)
+int Process(PathPass absoluteResourcesDir, PathPass outputDirectory, Configuration config)
 {
-    auto absoluteResourcesDir = std::filesystem::current_path();
-	Path outputDirectory = "../test/resources/embeds/";
-	Configuration config = ConfigurationParser::ParseFromFile("resources.json");
 
 	ProcessDirectory(absoluteResourcesDir, outputDirectory, config);
 	printf("\n"); config.Print();
 	if(!ExportMiniz(outputDirectory)) return -1;
+	return 0;
+}
 
+fs::path makeAbsoluteWithBase(const fs::path& rel_path, const fs::path& base_dir)
+{
+    fs::path abs_base = fs::absolute(base_dir);
+    return fs::weakly_canonical(abs_base / rel_path);
+}
+
+void printUsage()
+{
+	std::cout << "Usage: resembed <resources-directory> <output-directory> [config-file]\n";
+}
+
+int main(int argc, const char** argv)
+{
+	if(argc < 2 || argc > 4)
+	{
+		printUsage();
+		return -1;
+	}
+
+    Path resourcesDir = argv[1];
+	Path outputDirectory = argv[2]; //"../test/resources/embeds/";
+									//
+	Configuration config = (argc > 3) ?
+		ConfigurationParser::ParseFromFile(argv[3]) :
+		Configuration();
+
+    Path absoluteResourcesDir = resourcesDir.is_relative() ?
+		makeAbsoluteWithBase(fs::current_path(), resourcesDir) :
+		resourcesDir;
+
+	return Process(absoluteResourcesDir, outputDirectory, config);
 }
 

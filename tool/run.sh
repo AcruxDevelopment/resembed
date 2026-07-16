@@ -1,3 +1,3 @@
 g++ main.cpp NamingConventionConverter.cpp -o resembed
 rm -fr ../test/resources/
-./resembed
+./resembed . ../test/resources/ resources.json
